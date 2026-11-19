@@ -22,6 +22,7 @@ import kotlin.random.Random
 data class WeatherSceneState(
   val skinId: SkinId = SkinId.GRAPHITE,
   val condition: WeatherCondition = WeatherCondition.PARTLY_CLOUDY,
+  val temperatureDisplay: Int = 65,
   val cloudCover: Int = 65,
   val windSpeedMph: Double = 12.0,
   val windDirectionDeg: Int = 215,
@@ -30,7 +31,13 @@ data class WeatherSceneState(
   val moonPhaseFraction: Double = 0.72,
   val cloudSeed: Int = 1,
   val tiltX: Float = 0f,
-  val tiltY: Float = 0f
+  val tiltY: Float = 0f,
+  val sunOffsetX: Float = 0f,
+  val sunOffsetY: Float = 0f,
+  val cloudOffsetX: Float = 0f,
+  val cloudOffsetY: Float = 0f,
+  val tempOffsetX: Float = 0f,
+  val tempOffsetY: Float = 0f
 )
 
 class WeatherGLRenderer : GLSurfaceView.Renderer {
@@ -39,15 +46,16 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
   var state: WeatherSceneState = WeatherSceneState()
     set(value) {
       val seedChanged = field.cloudSeed != value.cloudSeed
-      val coverChanged = kotlin.math.abs(field.cloudCover - value.cloudCover) >= 12
+      val coverChanged = kotlin.math.abs(field.cloudCover - value.cloudCover) >= 10
       field = value
       if (seedChanged || coverChanged) {
         cloudsDirty = true
-        if (seedChanged) cloudPopSpring = 0.55f
+        if (seedChanged) cloudPopSpring = 0.52f
       }
     }
 
   private var programId = 0
+  private var bgProgramId = 0
   private var uMvpLoc = 0
   private var uModelLoc = 0
   private var uColorLoc = 0
@@ -57,9 +65,15 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
   private var uMoonModeLoc = 0
   private var uMoonPhaseLoc = 0
 
+  private var uBgColorLoc = 0
+  private var uBgTimeLoc = 0
+
   private lateinit var sphereMesh: MeshBuffers
   private lateinit var dropMesh: MeshBuffers
   private lateinit var boltMesh: MeshBuffers
+  private lateinit var streakMesh: MeshBuffers
+  private var bgQuadVao: Int = 0
+  private val digitMeshes = mutableMapOf<Char, MeshBuffers>()
 
   private val projMatrix = FloatArray(16)
   private val viewMatrix = FloatArray(16)
@@ -70,7 +84,9 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
     val x: Float,
     val y: Float,
     val z: Float,
-    val radius: Float,
+    val rx: Float,
+    val ry: Float,
+    val rz: Float,
     val driftPhase: Float
   )
 
@@ -87,13 +103,23 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
   @Volatile private var cloudPopSpring = 1f
   private var lastSeed = -1
 
-  private val rainParticles = List(85) {
+  private val rainParticles = List(90) {
     Particle(
       x = Random.nextFloat() * 5.6f - 2.8f,
-      y = Random.nextFloat() * 6.0f - 2.5f,
-      z = Random.nextFloat() * 2.4f - 1.2f,
-      speed = 3.6f + Random.nextFloat() * 2.4f,
+      y = Random.nextFloat() * 6.5f - 2.8f,
+      z = Random.nextFloat() * 2.2f - 0.8f,
+      speed = 3.8f + Random.nextFloat() * 2.4f,
       scale = 0.75f + Random.nextFloat() * 0.5f
+    )
+  }
+
+  private val windStreaks = List(5) { idx ->
+    Particle(
+      x = -2.2f + idx * 1.1f,
+      y = 0.85f + (idx % 3) * 0.42f,
+      z = 0.25f,
+      speed = 1.6f + idx * 0.2f,
+      scale = 0.55f + (idx % 2) * 0.35f
     )
   }
 
@@ -118,9 +144,20 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
     uMoonModeLoc = GLES30.glGetUniformLocation(programId, "uMoonMode")
     uMoonPhaseLoc = GLES30.glGetUniformLocation(programId, "uMoonPhase")
 
-    sphereMesh = buildSphereMesh(stacks = 20, slices = 28)
+    bgProgramId = createProgram(BG_VERTEX_SHADER, BG_FRAGMENT_SHADER)
+    uBgColorLoc = GLES30.glGetUniformLocation(bgProgramId, "uBgColor")
+    uBgTimeLoc = GLES30.glGetUniformLocation(bgProgramId, "uTime")
+    bgQuadVao = buildBgQuad()
+
+    sphereMesh = buildSphereMesh(stacks = 22, slices = 30)
     dropMesh = buildCylinderMesh(slices = 8)
     boltMesh = buildLightningBoltMesh()
+    streakMesh = buildStreakMesh()
+
+    "0123456789-".forEach { ch ->
+      val raw = Digit3DMeshBuilder.buildDigit(ch)
+      digitMeshes[ch] = uploadMesh(raw.vertices, raw.indices)
+    }
     cloudsDirty = true
   }
 
@@ -145,9 +182,8 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       lastSeed = s.cloudSeed
     }
 
-    cloudPopSpring += (1f - cloudPopSpring) * minOf(1f, dt * 9f)
+    cloudPopSpring += (1f - cloudPopSpring) * minOf(1f, dt * 10f)
 
-    // Thunderstorm flash timer
     if (s.condition == WeatherCondition.THUNDERSTORM) {
       if (elapsed > nextFlashTime) {
         lightningFlash = 1.0f
@@ -158,19 +194,28 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
 
     val bg = if (s.isDay) skin.background else skin.backgroundNight
     val flashBoost = lightningFlash * 0.45f
-    GLES30.glClearColor(
-      (bg.red + flashBoost).coerceAtMost(1f),
-      (bg.green + flashBoost).coerceAtMost(1f),
-      (bg.blue + flashBoost * 1.1f).coerceAtMost(1f),
-      1f
-    )
+    val bgR = (bg.red + flashBoost).coerceAtMost(1f)
+    val bgG = (bg.green + flashBoost).coerceAtMost(1f)
+    val bgB = (bg.blue + flashBoost * 1.1f).coerceAtMost(1f)
+
+    GLES30.glClearColor(bgR, bgG, bgB, 1f)
     GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+
+    // 0. Analog Film Grain + Studio Vignette Background Pass
+    GLES30.glDisable(GLES30.GL_DEPTH_TEST)
+    GLES30.glUseProgram(bgProgramId)
+    GLES30.glUniform3f(uBgColorLoc, bgR, bgG, bgB)
+    GLES30.glUniform1f(uBgTimeLoc, elapsed)
+    GLES30.glBindVertexArray(bgQuadVao)
+    GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+    GLES30.glBindVertexArray(0)
+    GLES30.glEnable(GLES30.GL_DEPTH_TEST)
 
     GLES30.glUseProgram(programId)
 
-    val camX = s.tiltX * 0.85f
-    val camY = 0.35f + s.tiltY * 0.6f
-    Matrix.setLookAtM(viewMatrix, 0, camX, camY, 7.6f, 0f, 0.35f, 0f, 0f, 1f, 0f)
+    val camX = s.tiltX * 0.75f
+    val camY = 0.25f + s.tiltY * 0.55f
+    Matrix.setLookAtM(viewMatrix, 0, camX, camY, 7.6f, 0f, 0.25f, 0f, 0f, 1f, 0f)
 
     val shaderIdx = when (skin.shaderMode) {
       ShaderMode.STANDARD -> 0
@@ -179,49 +224,75 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       ShaderMode.WIREFRAME -> 3
     }
     GLES30.glUniform1i(uShaderModeLoc, shaderIdx)
-    GLES30.glUniform3f(uLightDirLoc, 0.55f, 0.82f, 0.65f)
+    GLES30.glUniform3f(uLightDirLoc, 0.52f, 0.78f, 0.72f)
     val wireframe = skin.shaderMode == ShaderMode.WIREFRAME
 
-    // 1. Sun or Moon
+    // 1. Giant 3D Chiseled Temperature Numerals (inside 3D space!)
+    val tempStr = s.temperatureDisplay.toString()
+    val spacing = 0.76f
+    val startX = -((tempStr.length - 1) * spacing) / 2f
+    tempStr.forEachIndexed { idx, ch ->
+      val mesh = digitMeshes[ch] ?: return@forEachIndexed
+      drawMesh(
+        mesh = mesh,
+        tx = startX + idx * spacing + s.tempOffsetX,
+        ty = -0.35f + s.tempOffsetY,
+        tz = 0.0f,
+        sx = 1.0f,
+        sy = 1.05f,
+        sz = 1.0f,
+        rotY = s.tiltX * 0.16f,
+        rotZ = 0f,
+        color = skin.numeralPrimary,
+        emissive = 0.05f,
+        moonMode = false,
+        moonPhase = 0.5f,
+        wireframe = wireframe
+      )
+    }
+
+    // 2. 3D Sun or Moon
     if (s.isDay) {
-      val sunY = 1.65f + sin(elapsed * 0.7f) * 0.04f
+      val sunY = 1.38f + sin(elapsed * 0.7f) * 0.03f + s.sunOffsetY
       drawMesh(
         mesh = sphereMesh,
-        tx = 0.0f,
+        tx = s.sunOffsetX,
         ty = sunY,
-        tz = -1.1f,
-        sx = 0.92f,
-        sy = 0.92f,
-        sz = 0.92f,
+        tz = -0.45f,
+        sx = 0.86f,
+        sy = 0.86f,
+        sz = 0.86f,
+        rotY = 0f,
         rotZ = 0f,
         color = skin.sunColor,
-        emissive = 0.55f,
+        emissive = 0.48f,
         moonMode = false,
         moonPhase = 0.5f,
         wireframe = wireframe
       )
     } else {
-      val moonY = 1.72f + sin(elapsed * 0.5f) * 0.03f
+      val moonY = 1.42f + sin(elapsed * 0.5f) * 0.03f + s.sunOffsetY
       drawMesh(
         mesh = sphereMesh,
-        tx = 0.1f,
+        tx = s.sunOffsetX,
         ty = moonY,
-        tz = -1.0f,
-        sx = 0.84f,
-        sy = 0.84f,
-        sz = 0.84f,
+        tz = -0.45f,
+        sx = 0.78f,
+        sy = 0.78f,
+        sz = 0.78f,
+        rotY = 0f,
         rotZ = 0f,
         color = Color(0xFFE8ECF4),
-        emissive = 0.18f,
+        emissive = 0.14f,
         moonMode = true,
         moonPhase = s.moonPhaseFraction.toFloat(),
         wireframe = wireframe
       )
     }
 
-    // 2. Procedural 3D Clouds
-    val windFactor = (s.windSpeedMph / 15.0).toFloat().coerceIn(0.2f, 2.5f)
-    val cloudDarken = if (s.condition == WeatherCondition.THUNDERSTORM) 0.58f else 1f
+    // 3. Sculptural Blender-style 3D Cloud Clusters
+    val windFactor = (s.windSpeedMph / 15.0).toFloat().coerceIn(0.25f, 2.2f)
+    val cloudDarken = if (s.condition == WeatherCondition.THUNDERSTORM) 0.55f else 1f
     val cColor = Color(
       red = (skin.cloudColor.red * cloudDarken).coerceIn(0f, 1f),
       green = (skin.cloudColor.green * cloudDarken).coerceIn(0f, 1f),
@@ -229,17 +300,17 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       alpha = 1f
     )
     for (puff in cloudPuffs) {
-      val sway = sin(elapsed * 0.9f * windFactor + puff.driftPhase) * 0.07f
-      val bob = cos(elapsed * 1.1f + puff.driftPhase) * 0.03f
-      val r = puff.radius * cloudPopSpring
+      val sway = sin(elapsed * 0.85f * windFactor + puff.driftPhase) * 0.05f
+      val bob = cos(elapsed * 1.0f + puff.driftPhase) * 0.025f
       drawMesh(
         mesh = sphereMesh,
-        tx = puff.x + sway,
-        ty = puff.y + bob,
+        tx = puff.x + sway + s.cloudOffsetX,
+        ty = puff.y + bob + s.cloudOffsetY,
         tz = puff.z,
-        sx = r,
-        sy = r * 0.92f,
-        sz = r * 0.95f,
+        sx = puff.rx * cloudPopSpring,
+        sy = puff.ry * cloudPopSpring,
+        sz = puff.rz * cloudPopSpring,
+        rotY = 0f,
         rotZ = 0f,
         color = cColor,
         emissive = lightningFlash * 0.35f,
@@ -249,16 +320,41 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       )
     }
 
-    // 3. Lightning Bolt
+    // 4. Wind Streaks when breezy
+    if (s.windSpeedMph >= 8.0) {
+      for (streak in windStreaks) {
+        streak.x += streak.speed * windFactor * dt
+        if (streak.x > 2.4f) streak.x = -2.4f
+        drawMesh(
+          mesh = streakMesh,
+          tx = streak.x + s.sunOffsetX * 0.5f,
+          ty = streak.y + s.sunOffsetY * 0.5f,
+          tz = streak.z,
+          sx = streak.scale,
+          sy = 1f,
+          sz = 1f,
+          rotY = 0f,
+          rotZ = 0f,
+          color = skin.onSurface.copy(alpha = 0.65f),
+          emissive = 0.25f,
+          moonMode = false,
+          moonPhase = 0f,
+          wireframe = wireframe
+        )
+      }
+    }
+
+    // 5. Lightning Bolt
     if (s.condition == WeatherCondition.THUNDERSTORM && lightningFlash > 0.15f) {
       drawMesh(
         mesh = boltMesh,
-        tx = 0.05f,
-        ty = 0.85f,
-        tz = 0.3f,
-        sx = 0.7f,
-        sy = 0.85f,
-        sz = 0.7f,
+        tx = s.cloudOffsetX,
+        ty = 0.55f + s.cloudOffsetY,
+        tz = 0.35f,
+        sx = 0.68f,
+        sy = 0.82f,
+        sz = 0.68f,
+        rotY = 0f,
         rotZ = 0f,
         color = Color(0xFFFFF59D),
         emissive = 1.0f,
@@ -268,7 +364,7 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       )
     }
 
-    // 4. Physics Rain / Snow Particles
+    // 6. Physics Rain / Snow Particles
     val isSnow = s.condition == WeatherCondition.SNOW
     val isRain = s.condition in setOf(
       WeatherCondition.DRIZZLE,
@@ -280,11 +376,11 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
     if (isRain || isSnow) {
       val activeCount = when (s.condition) {
         WeatherCondition.HEAVY_RAIN, WeatherCondition.THUNDERSTORM -> rainParticles.size
-        WeatherCondition.RAIN, WeatherCondition.SNOW -> 58
-        else -> 32
+        WeatherCondition.RAIN, WeatherCondition.SNOW -> 60
+        else -> 34
       }
-      val windTiltRad = ((s.windSpeedMph / 35.0) * 0.38).toFloat().coerceIn(0.05f, 0.45f)
-      val windDriftX = sin(windTiltRad) * 2.8f
+      val windTiltRad = ((s.windSpeedMph / 35.0) * 0.35).toFloat().coerceIn(0.06f, 0.42f)
+      val windDriftX = sin(windTiltRad) * 2.6f
       val pColor = if (isSnow) Color.White else skin.rainColor
 
       for (i in 0 until activeCount) {
@@ -292,10 +388,8 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
         val fallSpeed = if (isSnow) p.speed * 0.35f else p.speed * 1.45f
         p.y -= fallSpeed * dt
         p.x += windDriftX * dt * (if (isSnow) 0.5f else 1.0f)
-        if (isSnow) {
-          p.x += sin(elapsed * 2.5f + i) * 0.3f * dt
-        }
-        if (p.y < -2.6f) {
+        if (isSnow) p.x += sin(elapsed * 2.5f + i) * 0.3f * dt
+        if (p.y < -2.8f) {
           p.y = 2.4f + Random.nextFloat() * 0.8f
           p.x = Random.nextFloat() * 5.6f - 2.8f
         }
@@ -307,12 +401,13 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
             tx = p.x,
             ty = p.y,
             tz = p.z,
-            sx = 0.045f * p.scale,
-            sy = 0.045f * p.scale,
-            sz = 0.045f * p.scale,
+            sx = 0.042f * p.scale,
+            sy = 0.042f * p.scale,
+            sz = 0.042f * p.scale,
+            rotY = 0f,
             rotZ = 0f,
             color = pColor,
-            emissive = 0.2f,
+            emissive = 0.25f,
             moonMode = false,
             moonPhase = 0f,
             wireframe = wireframe
@@ -323,9 +418,10 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
             tx = p.x,
             ty = p.y,
             tz = p.z,
-            sx = 0.022f * p.scale,
+            sx = 0.02f * p.scale,
             sy = 0.24f * p.scale,
-            sz = 0.022f * p.scale,
+            sz = 0.02f * p.scale,
+            rotY = 0f,
             rotZ = -windTiltRad,
             color = pColor,
             emissive = 0.35f,
@@ -344,15 +440,31 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       return
     }
     val rng = Random(seed * 7919 + cloudCover * 31)
-    val count = ((cloudCover / 100f) * 12f).toInt().coerceIn(3, 14)
     val list = mutableListOf<CloudPuff>()
-    for (i in 0 until count) {
-      val spreadX = (i.toFloat() / maxOf(1, count - 1) - 0.5f) * 2.9f + (rng.nextFloat() - 0.5f) * 0.45f
-      val baseY = 1.25f + (rng.nextFloat() - 0.5f) * 0.42f
-      val z = (rng.nextFloat() - 0.5f) * 0.7f
-      val r = 0.28f + rng.nextFloat() * 0.32f
-      list.add(CloudPuff(spreadX, baseY, z, r, rng.nextFloat() * 6.28f))
+
+    // Main sculptural foreground cloud cluster (tightly nestled lobes like Blender clay clouds)
+    val mainX = (rng.nextFloat() - 0.5f) * 0.45f
+    val mainY = 1.02f + (rng.nextFloat() - 0.5f) * 0.14f
+    list.add(CloudPuff(mainX, mainY + 0.08f, 0.35f, 0.46f, 0.42f, 0.40f, 0.2f))
+    list.add(CloudPuff(mainX - 0.36f, mainY - 0.04f, 0.30f, 0.33f, 0.28f, 0.30f, 1.1f))
+    list.add(CloudPuff(mainX + 0.38f, mainY - 0.02f, 0.32f, 0.36f, 0.30f, 0.32f, 2.0f))
+    list.add(CloudPuff(mainX + 0.14f, mainY + 0.18f, 0.28f, 0.30f, 0.28f, 0.28f, 2.8f))
+
+    // Secondary cloud cluster if overcast
+    if (cloudCover >= 45) {
+      val sx = if (mainX > 0f) -0.78f else 0.78f
+      val sy = 1.24f + (rng.nextFloat() - 0.5f) * 0.18f
+      list.add(CloudPuff(sx, sy, -0.15f, 0.38f, 0.34f, 0.34f, 3.6f))
+      list.add(CloudPuff(sx - 0.28f, sy - 0.06f, -0.18f, 0.26f, 0.23f, 0.25f, 4.2f))
+      list.add(CloudPuff(sx + 0.28f, sy - 0.04f, -0.18f, 0.27f, 0.24f, 0.25f, 5.0f))
     }
+
+    // Third small accent puff for heavy cloud cover
+    if (cloudCover >= 75) {
+      list.add(CloudPuff(-0.95f, 0.88f, 0.42f, 0.24f, 0.20f, 0.22f, 5.7f))
+      list.add(CloudPuff(0.95f, 0.92f, 0.40f, 0.25f, 0.21f, 0.22f, 0.9f))
+    }
+
     cloudPuffs = list
   }
 
@@ -364,6 +476,7 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
     sx: Float,
     sy: Float,
     sz: Float,
+    rotY: Float,
     rotZ: Float,
     color: Color,
     emissive: Float,
@@ -373,6 +486,9 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
   ) {
     Matrix.setIdentityM(modelMatrix, 0)
     Matrix.translateM(modelMatrix, 0, tx, ty, tz)
+    if (rotY != 0f) {
+      Matrix.rotateM(modelMatrix, 0, Math.toDegrees(rotY.toDouble()).toFloat(), 0f, 1f, 0f)
+    }
     if (rotZ != 0f) {
       Matrix.rotateM(modelMatrix, 0, Math.toDegrees(rotZ.toDouble()).toFloat(), 0f, 0f, 1f)
     }
@@ -396,6 +512,24 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
   }
 
   private data class MeshBuffers(val vao: Int, val indexCount: Int)
+
+  private fun buildBgQuad(): Int {
+    val verts = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
+    val vao = IntArray(1)
+    val vbo = IntArray(1)
+    GLES30.glGenVertexArrays(1, vao, 0)
+    GLES30.glGenBuffers(1, vbo, 0)
+    GLES30.glBindVertexArray(vao[0])
+    val buf = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
+      put(verts); position(0)
+    }
+    GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo[0])
+    GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, verts.size * 4, buf, GLES30.GL_STATIC_DRAW)
+    GLES30.glEnableVertexAttribArray(0)
+    GLES30.glVertexAttribPointer(0, 2, GLES30.GL_FLOAT, false, 8, 0)
+    GLES30.glBindVertexArray(0)
+    return vao[0]
+  }
 
   private fun buildSphereMesh(stacks: Int, slices: Int): MeshBuffers {
     val verts = mutableListOf<Float>()
@@ -446,6 +580,19 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       indices.addAll(listOf(a, b, d, b, c, d))
     }
     return uploadMesh(verts.toFloatArray(), indices.toShortArray())
+  }
+
+  private fun buildStreakMesh(): MeshBuffers {
+    val w = 0.35f
+    val h = 0.012f
+    val verts = floatArrayOf(
+      -w, -h, 0f, 0f, 0f, 1f,
+      w, -h, 0f, 0f, 0f, 1f,
+      w, h, 0f, 0f, 0f, 1f,
+      -w, h, 0f, 0f, 0f, 1f
+    )
+    val indices = shortArrayOf(0, 1, 2, 0, 2, 3)
+    return uploadMesh(verts, indices)
   }
 
   private fun buildLightningBoltMesh(): MeshBuffers {
@@ -531,16 +678,43 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
   }
 
   companion object {
+    private const val BG_VERTEX_SHADER = """#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUv;
+void main() {
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}
+"""
+
+    private const val BG_FRAGMENT_SHADER = """#version 300 es
+precision mediump float;
+in vec2 vUv;
+uniform vec3 uBgColor;
+uniform float uTime;
+out vec4 fragColor;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+void main() {
+  float dist = distance(vUv, vec2(0.5, 0.45));
+  float vignette = 1.0 - smoothstep(0.25, 0.95, dist) * 0.18;
+  float grain = (hash(vUv * 512.0 + fract(uTime)) - 0.5) * 0.032;
+  vec3 col = clamp(uBgColor * vignette + grain, 0.0, 1.0);
+  fragColor = vec4(col, 1.0);
+}
+"""
+
     private const val VERTEX_SHADER = """#version 300 es
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 uniform mat4 uMvp;
 uniform mat4 uModel;
 out vec3 vNormal;
-out vec3 vLocalNormal;
 void main() {
   vNormal = normalize(mat3(uModel) * aNormal);
-  vLocalNormal = normalize(aNormal);
   gl_Position = uMvp * vec4(aPos, 1.0);
 }
 """
@@ -548,7 +722,6 @@ void main() {
     private const val FRAGMENT_SHADER = """#version 300 es
 precision mediump float;
 in vec3 vNormal;
-in vec3 vLocalNormal;
 uniform vec4 uColor;
 uniform float uEmissive;
 uniform vec3 uLightDir;
@@ -586,8 +759,8 @@ void main() {
     return;
   }
 
-  float ambient = (uMoonMode == 1) ? 0.12 : 0.42;
-  vec3 lit = base * (ambient + (1.0 - ambient) * diff) + base * uEmissive + vec3(rim * 0.14);
+  float ambient = (uMoonMode == 1) ? 0.12 : 0.44;
+  vec3 lit = base * (ambient + (1.0 - ambient) * diff) + base * uEmissive + vec3(rim * 0.12);
   fragColor = vec4(lit, uColor.a);
 }
 """

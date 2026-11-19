@@ -17,18 +17,16 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -54,7 +52,6 @@ import com.unboring.weather.render3d.WeatherSceneState
 import com.unboring.weather.ui.components.AirQualityPanel
 import com.unboring.weather.ui.components.BlueprintCalloutsOverlay
 import com.unboring.weather.ui.components.CloudburstMinigamePanel
-import com.unboring.weather.ui.components.ExtrudedTempDisplay
 import com.unboring.weather.ui.components.LocationSearchSheet
 import com.unboring.weather.ui.components.MoonDetailPanel
 import com.unboring.weather.ui.components.PlayTheWeatherBar
@@ -63,6 +60,7 @@ import com.unboring.weather.ui.components.SkinsAndProSheet
 import com.unboring.weather.ui.components.formatTemp
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
   viewModel: MainScreenViewModel = viewModel()
@@ -74,8 +72,16 @@ fun MainScreen(
 
   var tiltX by remember { mutableFloatStateOf(0f) }
   var tiltY by remember { mutableFloatStateOf(0f) }
+  var sunOffsetX by remember { mutableFloatStateOf(0f) }
+  var sunOffsetY by remember { mutableFloatStateOf(0f) }
+  var cloudOffsetX by remember { mutableFloatStateOf(0f) }
+  var cloudOffsetY by remember { mutableFloatStateOf(0f) }
+  var tempOffsetX by remember { mutableFloatStateOf(0f) }
+  var tempOffsetY by remember { mutableFloatStateOf(0f) }
+
   var showSkinsSheet by remember { mutableStateOf(false) }
   var showLocationSheet by remember { mutableStateOf(false) }
+  var showMenuSheet by remember { mutableStateOf(false) }
 
   val pagerState = rememberPagerState(pageCount = { 5 })
   val scope = rememberCoroutineScope()
@@ -92,27 +98,46 @@ fun MainScreen(
     ) { page ->
       when (page) {
         0 -> {
-          // Main 3D Stage
+          // Pure 3D Stage — zero clutter
           Box(
             modifier = Modifier
               .fillMaxSize()
               .pointerInput(Unit) {
-                detectTapGestures { viewModel.onSceneTap() }
+                detectTapGestures(
+                  onTap = { viewModel.onSceneTap() },
+                  onDoubleTap = {
+                    sunOffsetX = 0f; sunOffsetY = 0f
+                    cloudOffsetX = 0f; cloudOffsetY = 0f
+                    tempOffsetX = 0f; tempOffsetY = 0f
+                    tiltX = 0f; tiltY = 0f
+                    viewModel.onScrubTick()
+                  }
+                )
               }
               .pointerInput(Unit) {
                 detectDragGestures(
-                  onDragEnd = {
-                    tiltX = 0f
-                    tiltY = 0f
-                  },
-                  onDragCancel = {
-                    tiltX = 0f
-                    tiltY = 0f
-                  }
+                  onDragEnd = { tiltX = 0f; tiltY = 0f },
+                  onDragCancel = { tiltX = 0f; tiltY = 0f }
                 ) { change, dragAmount ->
                   change.consume()
-                  tiltX = (tiltX + dragAmount.x / 320f).coerceIn(-1f, 1f)
-                  tiltY = (tiltY + dragAmount.y / 320f).coerceIn(-1f, 1f)
+                  val yFrac = change.position.y / size.height.toFloat()
+                  val dx = dragAmount.x / 180f
+                  val dy = -dragAmount.y / 180f
+
+                  if (yFrac < 0.36f) {
+                    // Upper stage: drag 3D clouds & sun/moon freely
+                    cloudOffsetX = (cloudOffsetX + dx).coerceIn(-1.6f, 1.6f)
+                    cloudOffsetY = (cloudOffsetY + dy).coerceIn(-1.2f, 1.2f)
+                    sunOffsetX = (sunOffsetX + dx * 0.65f).coerceIn(-1.4f, 1.4f)
+                    sunOffsetY = (sunOffsetY + dy * 0.65f).coerceIn(-1.0f, 1.0f)
+                  } else if (yFrac < 0.70f) {
+                    // Middle stage: drag 3D temperature numerals
+                    tempOffsetX = (tempOffsetX + dx).coerceIn(-1.4f, 1.4f)
+                    tempOffsetY = (tempOffsetY + dy).coerceIn(-1.0f, 1.0f)
+                  }
+
+                  tiltX = (tiltX + dragAmount.x / 360f).coerceIn(-1f, 1f)
+                  tiltY = (tiltY + dragAmount.y / 360f).coerceIn(-1f, 1f)
                 }
               }
           ) {
@@ -120,6 +145,7 @@ fun MainScreen(
               sceneState = WeatherSceneState(
                 skinId = state.skinId,
                 condition = activeHour.condition,
+                temperatureDisplay = formatTemp(activeHour.tempF, state.useCelsius),
                 cloudCover = activeHour.cloudCover,
                 windSpeedMph = activeHour.windSpeedMph,
                 windDirectionDeg = activeHour.windDirectionDeg,
@@ -128,7 +154,13 @@ fun MainScreen(
                 moonPhaseFraction = state.snapshot.moon.phaseFraction,
                 cloudSeed = state.cloudSeed,
                 tiltX = tiltX,
-                tiltY = tiltY
+                tiltY = tiltY,
+                sunOffsetX = sunOffsetX,
+                sunOffsetY = sunOffsetY,
+                cloudOffsetX = cloudOffsetX,
+                cloudOffsetY = cloudOffsetY,
+                tempOffsetX = tempOffsetX,
+                tempOffsetY = tempOffsetY
               ),
               modifier = Modifier.fillMaxSize()
             )
@@ -151,7 +183,7 @@ fun MainScreen(
                 modifier = Modifier
                   .align(Alignment.TopCenter)
                   .windowInsetsPadding(WindowInsets.statusBars)
-                  .padding(top = 64.dp)
+                  .padding(top = 56.dp)
                   .clip(RoundedCornerShape(50))
                   .background(Color(0xFFFFD60A))
                   .padding(horizontal = 14.dp, vertical = 4.dp)
@@ -166,17 +198,23 @@ fun MainScreen(
               }
             }
 
-            // Giant 3D Extruded Temperature
-            ExtrudedTempDisplay(
-              tempDisplay = formatTemp(activeHour.tempF, state.useCelsius),
-              conditionLabel = activeHour.condition.label,
-              precipProbability = activeHour.precipProbability,
-              skin = skin,
-              tiltX = tiltX,
-              tiltY = tiltY,
+            // Condition subtitle below the 3D numeral
+            val condSub = if (activeHour.precipProbability >= 25) {
+              "${activeHour.condition.label.uppercase()}  ${activeHour.precipProbability}%"
+            } else {
+              activeHour.condition.label.uppercase()
+            }
+            Text(
+              text = condSub,
+              color = skin.onSurface.copy(alpha = 0.85f),
+              fontSize = 13.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace,
+              letterSpacing = 1.8.sp,
               modifier = Modifier
-                .align(Alignment.Center)
-                .padding(top = 80.dp)
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = 176.dp)
             )
 
             // Bottom "Play the Weather" Scrub Bar
@@ -192,7 +230,7 @@ fun MainScreen(
               modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 36.dp)
+                .padding(bottom = 30.dp)
             )
           }
         }
@@ -222,141 +260,100 @@ fun MainScreen(
       }
     }
 
-    // Minimal Floating Top Bar
+    // Whisper-quiet Top Bar (City label + subtle menu dot)
     Row(
       modifier = Modifier
         .fillMaxWidth()
         .windowInsetsPadding(WindowInsets.statusBars)
-        .padding(horizontal = 16.dp, vertical = 10.dp),
+        .padding(horizontal = 20.dp, vertical = 14.dp),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically
     ) {
-      Row(
-        modifier = Modifier
-          .clip(RoundedCornerShape(50))
-          .background(skin.pillBackground.copy(alpha = 0.85f))
-          .clickable { showLocationSheet = true }
-          .padding(horizontal = 14.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text(
-          text = state.snapshot.location.name.uppercase(),
-          color = skin.onSurface,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Black,
-          fontFamily = FontFamily.Monospace
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Icon(
-          imageVector = Icons.Rounded.KeyboardArrowDown,
-          contentDescription = "Select City",
-          tint = skin.onSurface,
-          modifier = Modifier.size(16.dp)
-        )
-      }
+      Text(
+        text = state.snapshot.location.name.uppercase(),
+        color = skin.onSurface.copy(alpha = 0.72f),
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        fontFamily = FontFamily.Monospace,
+        letterSpacing = 1.6.sp,
+        modifier = Modifier.clickable { showLocationSheet = true }
+      )
 
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+      Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         state.availableUpdate?.let { rel ->
-          Box(
-            modifier = Modifier
-              .clip(RoundedCornerShape(50))
-              .background(Color(0xFF00C853))
-              .clickable { viewModel.installUpdate() }
-              .padding(horizontal = 10.dp, vertical = 7.dp)
-          ) {
-            Text(
-              text = if (state.isUpdating) "UPDATING..." else "UPDATE ${rel.tagName}",
-              color = Color.White,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Black,
-              fontFamily = FontFamily.Monospace
-            )
-          }
-        }
-
-        // °F / °C toggle
-        Box(
-          modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(skin.pillBackground.copy(alpha = 0.85f))
-            .clickable { viewModel.toggleUnit() }
-            .padding(horizontal = 11.dp, vertical = 7.dp)
-        ) {
           Text(
-            text = if (state.useCelsius) "°C" else "°F",
-            color = skin.onSurface,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Black,
-            fontFamily = FontFamily.Monospace
-          )
-        }
-
-        // Sound toggle
-        Box(
-          modifier = Modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(skin.pillBackground.copy(alpha = 0.85f))
-            .clickable { viewModel.toggleSound() },
-          contentAlignment = Alignment.Center
-        ) {
-          Icon(
-            imageVector = if (state.soundEnabled) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
-            contentDescription = "Sound",
-            tint = skin.onSurface,
-            modifier = Modifier.size(16.dp)
-          )
-        }
-
-        // Skins & Pro button
-        Row(
-          modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(skin.accent)
-            .clickable { showSkinsSheet = true }
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Icon(
-            imageVector = Icons.Rounded.Palette,
-            contentDescription = "Skins",
-            tint = Color.White,
-            modifier = Modifier.size(15.dp)
-          )
-          Spacer(modifier = Modifier.width(5.dp))
-          Text(
-            text = if (state.isPro) "SKINS" else "PRO",
-            color = Color.White,
+            text = "UPDATE ${rel.tagName}",
+            color = Color(0xFF00E676),
             fontSize = 11.sp,
             fontWeight = FontWeight.Black,
-            fontFamily = FontFamily.Monospace
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.clickable { viewModel.installUpdate() }
           )
         }
+
+        Icon(
+          imageVector = Icons.Rounded.MoreHoriz,
+          contentDescription = "Menu",
+          tint = skin.onSurface.copy(alpha = 0.72f),
+          modifier = Modifier
+            .size(24.dp)
+            .clickable { showMenuSheet = true }
+        )
       }
     }
 
-    // Bottom Page Navigation Dots (3D • PRECIP • MOON • AQI • GAME)
-    val pageLabels = listOf("3D", "PRECIP", "MOON", "AQI", "GAME")
+    // Subtle 5-dot Page Indicator at the very bottom
     Row(
       modifier = Modifier
         .align(Alignment.BottomCenter)
         .windowInsetsPadding(WindowInsets.navigationBars)
-        .padding(bottom = 8.dp),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
+        .padding(bottom = 10.dp),
+      horizontalArrangement = Arrangement.spacedBy(7.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      pageLabels.forEachIndexed { idx, label ->
+      repeat(5) { idx ->
         val active = pagerState.currentPage == idx
-        Text(
-          text = label,
-          color = if (active) skin.accent else skin.onSurface.copy(alpha = 0.45f),
-          fontSize = 10.sp,
-          fontWeight = if (active) FontWeight.Black else FontWeight.SemiBold,
-          fontFamily = FontFamily.Monospace,
-          modifier = Modifier.clickable {
-            scope.launch { pagerState.animateScrollToPage(idx) }
-          }
+        Box(
+          modifier = Modifier
+            .size(if (active) 7.dp else 5.dp)
+            .clip(CircleShape)
+            .background(if (active) skin.onSurface else skin.onSurface.copy(alpha = 0.28f))
+            .clickable { scope.launch { pagerState.animateScrollToPage(idx) } }
         )
+      }
+    }
+  }
+
+  if (showMenuSheet) {
+    ModalBottomSheet(onDismissRequest = { showMenuSheet = false }) {
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+      ) {
+        Text("UN BORING WEATHER", fontSize = 18.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+        MenuActionRow("3D Skins & Pro", skin.id.displayName) {
+          showMenuSheet = false
+          showSkinsSheet = true
+        }
+        MenuActionRow("Location", state.snapshot.location.name) {
+          showMenuSheet = false
+          showLocationSheet = true
+        }
+        MenuActionRow("Temperature Unit", if (state.useCelsius) "Celsius (°C)" else "Fahrenheit (°F)") {
+          viewModel.toggleUnit()
+        }
+        MenuActionRow("Sound Effects", if (state.soundEnabled) "On" else "Muted") {
+          viewModel.toggleSound()
+        }
+        MenuActionRow("Reset 3D Positions", "Center sun, clouds & temp") {
+          sunOffsetX = 0f; sunOffsetY = 0f
+          cloudOffsetX = 0f; cloudOffsetY = 0f
+          tempOffsetX = 0f; tempOffsetY = 0f
+          showMenuSheet = false
+        }
+        Spacer(modifier = Modifier.height(14.dp))
       }
     }
   }
@@ -378,5 +375,21 @@ fun MainScreen(
       onSelectLocation = viewModel::loadWeather,
       onDismiss = { showLocationSheet = false }
     )
+  }
+}
+
+@Composable
+private fun MenuActionRow(title: String, value: String, onClick: () -> Unit) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(12.dp))
+      .clickable { onClick() }
+      .padding(vertical = 10.dp, horizontal = 4.dp),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    Text(value, fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = Color.Gray)
   }
 }
