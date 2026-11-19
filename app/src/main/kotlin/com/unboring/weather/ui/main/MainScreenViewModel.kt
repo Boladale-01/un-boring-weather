@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.unboring.weather.data.AppReleaseInfo
 import com.unboring.weather.data.AppUpdater
 import com.unboring.weather.data.LicenseManager
+import com.unboring.weather.data.LocationHelper
 import com.unboring.weather.data.OpenMeteoRepository
 import com.unboring.weather.feedback.WeatherAudio
 import com.unboring.weather.feedback.WeatherHaptics
 import com.unboring.weather.model.SkinId
 import com.unboring.weather.model.WeatherCondition
 import com.unboring.weather.model.WeatherLocation
+import com.unboring.weather.model.WeatherModelSource
 import com.unboring.weather.model.WeatherSnapshot
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +33,7 @@ data class WeatherUiState(
   val soundEnabled: Boolean = true,
   val hapticsEnabled: Boolean = true,
   val isLoading: Boolean = false,
+  val modelSource: WeatherModelSource = WeatherModelSource.BEST_MATCH,
   val availableUpdate: AppReleaseInfo? = null,
   val isUpdating: Boolean = false
 )
@@ -40,6 +43,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
   private val repository = OpenMeteoRepository()
   private val licenseManager = LicenseManager(application)
   private val appUpdater = AppUpdater(application)
+  private val locationHelper = LocationHelper(application)
   val haptics = WeatherHaptics(application)
   val audio = WeatherAudio()
 
@@ -85,14 +89,33 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
   fun loadWeather(location: WeatherLocation) {
     licenseManager.saveLocation(location)
     _uiState.update { it.copy(isLoading = true) }
+    val model = _uiState.value.modelSource
     viewModelScope.launch {
-      val snap = repository.fetchWeather(location)
+      val snap = repository.fetchWeather(location, model)
       _uiState.update {
         it.copy(
           snapshot = snap,
           selectedHourIndex = 0,
           isLoading = false
         )
+      }
+    }
+  }
+
+  fun cycleWeatherModel() {
+    haptics.buttonClick()
+    val values = WeatherModelSource.entries
+    val next = values[(values.indexOf(_uiState.value.modelSource) + 1) % values.size]
+    _uiState.update { it.copy(modelSource = next) }
+    loadWeather(_uiState.value.snapshot.location)
+  }
+
+  fun useDeviceLocation() {
+    viewModelScope.launch {
+      val loc = locationHelper.getCurrentWeatherLocation()
+      if (loc != null) {
+        haptics.cloudPop()
+        loadWeather(loc)
       }
     }
   }

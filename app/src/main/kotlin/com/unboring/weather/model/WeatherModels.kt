@@ -22,6 +22,13 @@ enum class ShaderMode {
   WIREFRAME
 }
 
+enum class WeatherModelSource(val apiParam: String, val displayName: String, val description: String) {
+  BEST_MATCH("best_match", "Best Match (Auto)", "Blends regional 1-2km models + global"),
+  ECMWF("ecmwf_ifs025", "ECMWF IFS", "#1 global medium-range accuracy"),
+  ICON("icon_seamless", "DWD ICON", "High-res European & global specialist"),
+  GFS("gfs_seamless", "NOAA GFS / HRRR", "Rapid US storm & convective updates")
+}
+
 enum class SkinId(val sku: String, val displayName: String, val subtitle: String, val isPro: Boolean) {
   GRAPHITE("SKN001", "Graphite", "Matte obsidian & coral sun", false),
   CHROMA("SKN002", "Chroma", "Bake in the golden rays", false),

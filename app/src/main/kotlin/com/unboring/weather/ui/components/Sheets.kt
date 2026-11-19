@@ -223,6 +223,7 @@ fun LocationSearchSheet(
   presets: List<WeatherLocation>,
   onSearch: suspend (String) -> List<WeatherLocation>,
   onSelectLocation: (WeatherLocation) -> Unit,
+  onUseCurrentLocation: () -> Unit,
   onDismiss: () -> Unit
 ) {
   val scope = rememberCoroutineScope()
@@ -235,7 +236,16 @@ fun LocationSearchSheet(
         .fillMaxWidth()
         .padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
-      Text("LOCATIONS", fontSize = 22.sp, fontWeight = FontWeight.Black)
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text("LOCATIONS", fontSize = 22.sp, fontWeight = FontWeight.Black)
+        TextButton(onClick = { onUseCurrentLocation(); onDismiss() }) {
+          Text("USE GPS", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+        }
+      }
       Spacer(modifier = Modifier.height(10.dp))
       OutlinedTextField(
         value = query,

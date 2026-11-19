@@ -7,6 +7,7 @@ import com.unboring.weather.model.MinutePrecipPoint
 import com.unboring.weather.model.MoonInfo
 import com.unboring.weather.model.WeatherCondition
 import com.unboring.weather.model.WeatherLocation
+import com.unboring.weather.model.WeatherModelSource
 import com.unboring.weather.model.WeatherSnapshot
 import java.net.HttpURLConnection
 import java.net.URL
@@ -42,8 +43,12 @@ class OpenMeteoRepository {
     WeatherLocation("San Francisco", "California, US", 37.7749, -122.4194)
   )
 
-  suspend fun fetchWeather(location: WeatherLocation): WeatherSnapshot = withContext(Dispatchers.IO) {
+  suspend fun fetchWeather(
+    location: WeatherLocation,
+    modelSource: WeatherModelSource = WeatherModelSource.BEST_MATCH
+  ): WeatherSnapshot = withContext(Dispatchers.IO) {
     try {
+      val modelQuery = if (modelSource == WeatherModelSource.BEST_MATCH) "" else "&models=${modelSource.apiParam}"
       val forecastUrl =
         "https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}" +
           "&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m," +
@@ -51,7 +56,7 @@ class OpenMeteoRepository {
           "visibility,wind_speed_10m,wind_direction_10m,uv_index,is_day" +
           "&minutely_15=precipitation,precipitation_probability" +
           "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max" +
-          "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timeformat=unixtime&timezone=auto&forecast_days=8"
+          "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timeformat=unixtime&timezone=auto&forecast_days=8$modelQuery"
 
       val aqiUrl =
         "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${location.latitude}&longitude=${location.longitude}" +

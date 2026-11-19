@@ -487,3 +487,122 @@ fun CloudburstMinigamePanel(
     }
   }
 }
+
+@Composable
+fun Instruments3DPanel(
+  snapshot: WeatherSnapshot,
+  activeHour: HourlyPoint,
+  skin: WeatherSkin,
+  modifier: Modifier = Modifier
+) {
+  Column(
+    modifier = modifier
+      .fillMaxSize()
+      .padding(horizontal = 24.dp, vertical = 78.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.SpaceBetween
+  ) {
+    Text("INSTRUMENTS", color = skin.onSurface, fontSize = 30.sp, fontWeight = FontWeight.Black)
+
+    // 3D-style Tactile Wind Compass + Barometer Dials
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+      // Wind Compass Dial
+      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Canvas(modifier = Modifier.size(134.dp)) {
+          val r = size.minDimension / 2f
+          val c = Offset(size.width / 2f, size.height / 2f)
+          // 3D Beveled Outer Ring
+          drawCircle(skin.numeralExtrude, radius = r, center = c + Offset(0f, 5.dp.toPx()))
+          drawCircle(skin.surface, radius = r, center = c)
+          drawCircle(skin.onSurface.copy(alpha = 0.25f), radius = r - 6.dp.toPx(), center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+
+          // Compass needle
+          val rad = (activeHour.windDirectionDeg - 90) * PI / 180.0
+          val tip = Offset(
+            c.x + (kotlin.math.cos(rad) * (r - 18.dp.toPx())).toFloat(),
+            c.y + (kotlin.math.sin(rad) * (r - 18.dp.toPx())).toFloat()
+          )
+          val tail = Offset(
+            c.x - (kotlin.math.cos(rad) * (r * 0.35f)).toFloat(),
+            c.y - (kotlin.math.sin(rad) * (r * 0.35f)).toFloat()
+          )
+          drawLine(skin.accent, tail, tip, strokeWidth = 5.dp.toPx())
+          drawCircle(skin.onSurface, radius = 6.dp.toPx(), center = c)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("${activeHour.windSpeedMph.roundToInt()} MPH", color = skin.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+        Text("WIND ${activeHour.windDirectionDeg}°", color = skin.onSurface.copy(alpha = 0.6f), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+      }
+
+      // Barometer Pressure Dial
+      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Canvas(modifier = Modifier.size(134.dp)) {
+          val r = size.minDimension / 2f
+          val c = Offset(size.width / 2f, size.height / 2f)
+          drawCircle(skin.numeralExtrude, radius = r, center = c + Offset(0f, 5.dp.toPx()))
+          drawCircle(skin.surface, radius = r, center = c)
+          drawArc(
+            color = skin.accent.copy(alpha = 0.35f),
+            startAngle = 140f,
+            sweepAngle = 260f,
+            useCenter = false,
+            topLeft = Offset(12.dp.toPx(), 12.dp.toPx()),
+            size = Size(size.width - 24.dp.toPx(), size.height - 24.dp.toPx()),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(8.dp.toPx())
+          )
+          // Map 29.0..30.6 inHg to 140..400 deg
+          val norm = ((activeHour.pressureInHg - 29.0) / 1.6).coerceIn(0.0, 1.0)
+          val deg = 140.0 + norm * 260.0
+          val rad = deg * PI / 180.0
+          val tip = Offset(
+            c.x + (kotlin.math.cos(rad) * (r - 20.dp.toPx())).toFloat(),
+            c.y + (kotlin.math.sin(rad) * (r - 20.dp.toPx())).toFloat()
+          )
+          drawLine(skin.sunColor, c, tip, strokeWidth = 4.dp.toPx())
+          drawCircle(skin.onSurface, radius = 6.dp.toPx(), center = c)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("${activeHour.pressureInHg} INHG", color = skin.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace)
+        val trend = if (activeHour.pressureInHg >= 30.0) "HIGH PRESSURE" else "LOW / STORMY"
+        Text(trend, color = skin.onSurface.copy(alpha = 0.6f), fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+      }
+    }
+
+    // Solar Path & Golden Hour Card
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(22.dp))
+        .background(skin.surface.copy(alpha = 0.92f))
+        .padding(18.dp)
+    ) {
+      Text("SOLAR ARC & GOLDEN HOUR", color = skin.onSurface.copy(alpha = 0.65f), fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+      Spacer(modifier = Modifier.height(10.dp))
+      Canvas(modifier = Modifier.fillMaxWidth().height(70.dp)) {
+        val w = size.width
+        val h = size.height
+        drawLine(skin.onSurface.copy(alpha = 0.2f), Offset(0f, h * 0.78f), Offset(w, h * 0.78f), 2.dp.toPx())
+        drawArc(
+          color = skin.sunColor.copy(alpha = 0.7f),
+          startAngle = 180f,
+          sweepAngle = 180f,
+          useCenter = false,
+          topLeft = Offset(w * 0.08f, h * 0.14f),
+          size = Size(w * 0.84f, h * 1.28f),
+          style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx())
+        )
+        val sunPos = if (activeHour.isDay) 0.55f else 0.12f
+        val sx = w * (0.08f + sunPos * 0.84f)
+        val sy = h * 0.78f - kotlin.math.sin(sunPos * PI).toFloat() * (h * 0.62f)
+        drawCircle(skin.sunColor, radius = 9.dp.toPx(), center = Offset(sx, sy))
+      }
+      Spacer(modifier = Modifier.height(8.dp))
+      AstroRow("SUNRISE / GOLDEN", snapshot.sunriseLabel, skin)
+      AstroRow("SUNSET / BLUE HR", snapshot.sunsetLabel, skin)
+      AstroRow("DEW POINT COMFORT", if (activeHour.dewPointF > 65) "MUGGY" else if (activeHour.dewPointF > 55) "COMFORTABLE" else "CRISP", skin)
+    }
+  }
+}

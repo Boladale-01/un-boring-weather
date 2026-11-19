@@ -1,5 +1,8 @@
 package com.unboring.weather.ui.main
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -29,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -52,6 +56,7 @@ import com.unboring.weather.render3d.WeatherSceneState
 import com.unboring.weather.ui.components.AirQualityPanel
 import com.unboring.weather.ui.components.BlueprintCalloutsOverlay
 import com.unboring.weather.ui.components.CloudburstMinigamePanel
+import com.unboring.weather.ui.components.Instruments3DPanel
 import com.unboring.weather.ui.components.LocationSearchSheet
 import com.unboring.weather.ui.components.MoonDetailPanel
 import com.unboring.weather.ui.components.PlayTheWeatherBar
@@ -83,7 +88,24 @@ fun MainScreen(
   var showLocationSheet by remember { mutableStateOf(false) }
   var showMenuSheet by remember { mutableStateOf(false) }
 
-  val pagerState = rememberPagerState(pageCount = { 5 })
+  val locationLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestMultiplePermissions()
+  ) { grants ->
+    if (grants.values.any { it }) {
+      viewModel.useDeviceLocation()
+    }
+  }
+
+  LaunchedEffect(Unit) {
+    locationLauncher.launch(
+      arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+      )
+    )
+  }
+
+  val pagerState = rememberPagerState(pageCount = { 6 })
   val scope = rememberCoroutineScope()
   val bgColor = if (activeHour.isDay) skin.background else skin.backgroundNight
 
@@ -242,18 +264,24 @@ fun MainScreen(
           onScrubTick = viewModel::onScrubTick
         )
 
-        2 -> MoonDetailPanel(
-          snapshot = state.snapshot,
-          skin = skin
-        )
-
-        3 -> AirQualityPanel(
+        2 -> Instruments3DPanel(
           snapshot = state.snapshot,
           activeHour = activeHour,
           skin = skin
         )
 
-        4 -> CloudburstMinigamePanel(
+        3 -> MoonDetailPanel(
+          snapshot = state.snapshot,
+          skin = skin
+        )
+
+        4 -> AirQualityPanel(
+          snapshot = state.snapshot,
+          activeHour = activeHour,
+          skin = skin
+        )
+
+        5 -> CloudburstMinigamePanel(
           skin = skin,
           onCloudPop = viewModel::onCloudburstPop
         )
@@ -302,7 +330,7 @@ fun MainScreen(
       }
     }
 
-    // Subtle 5-dot Page Indicator at the very bottom
+    // Subtle 6-dot Page Indicator at the very bottom
     Row(
       modifier = Modifier
         .align(Alignment.BottomCenter)
@@ -311,7 +339,7 @@ fun MainScreen(
       horizontalArrangement = Arrangement.spacedBy(7.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      repeat(5) { idx ->
+      repeat(6) { idx ->
         val active = pagerState.currentPage == idx
         Box(
           modifier = Modifier
@@ -340,6 +368,9 @@ fun MainScreen(
         MenuActionRow("Location", state.snapshot.location.name) {
           showMenuSheet = false
           showLocationSheet = true
+        }
+        MenuActionRow("Weather Model", state.modelSource.displayName) {
+          viewModel.cycleWeatherModel()
         }
         MenuActionRow("Temperature Unit", if (state.useCelsius) "Celsius (°C)" else "Fahrenheit (°F)") {
           viewModel.toggleUnit()
@@ -373,6 +404,14 @@ fun MainScreen(
       presets = viewModel.presetLocations,
       onSearch = viewModel::searchCities,
       onSelectLocation = viewModel::loadWeather,
+      onUseCurrentLocation = {
+        locationLauncher.launch(
+          arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+          )
+        )
+      },
       onDismiss = { showLocationSheet = false }
     )
   }
