@@ -30,7 +30,7 @@ data class AppReleaseInfo(
 class AppUpdater(private val context: Context) {
 
   companion object {
-    const val GITHUB_OWNER = "YOUR_GITHUB_USERNAME"
+    const val GITHUB_OWNER = "Boladale-01"
     const val GITHUB_REPO = "un-boring-weather"
     const val CURRENT_VERSION_NAME = "1.0"
   }
