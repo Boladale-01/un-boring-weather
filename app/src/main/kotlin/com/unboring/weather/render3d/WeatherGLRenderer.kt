@@ -32,12 +32,10 @@ data class WeatherSceneState(
   val cloudSeed: Int = 1,
   val tiltX: Float = 0f,
   val tiltY: Float = 0f,
-  val sunOffsetX: Float = 0f,
-  val sunOffsetY: Float = 0f,
-  val cloudOffsetX: Float = 0f,
-  val cloudOffsetY: Float = 0f,
-  val tempOffsetX: Float = 0f,
-  val tempOffsetY: Float = 0f
+  val pullX: Float = 0f,
+  val pullY: Float = 0f,
+  val spinAngleY: Float = 0f,
+  val spinAngleX: Float = 0f
 )
 
 class WeatherGLRenderer : GLSurfaceView.Renderer {
@@ -235,13 +233,13 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       val mesh = digitMeshes[ch] ?: return@forEachIndexed
       drawMesh(
         mesh = mesh,
-        tx = startX + idx * spacing + s.tempOffsetX,
-        ty = -0.35f + s.tempOffsetY,
+        tx = startX + idx * spacing + s.pullX * 0.55f,
+        ty = -0.35f + s.pullY * 0.55f,
         tz = 0.0f,
         sx = 1.0f,
         sy = 1.05f,
         sz = 1.0f,
-        rotY = s.tiltX * 0.16f,
+        rotY = s.spinAngleY + s.tiltX * 0.16f,
         rotZ = 0f,
         color = skin.numeralPrimary,
         emissive = 0.05f,
@@ -253,16 +251,16 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
 
     // 2. 3D Sun or Moon
     if (s.isDay) {
-      val sunY = 1.38f + sin(elapsed * 0.7f) * 0.03f + s.sunOffsetY
+      val sunY = 1.38f + sin(elapsed * 0.7f) * 0.03f + s.pullY * 0.75f
       drawMesh(
         mesh = sphereMesh,
-        tx = s.sunOffsetX,
+        tx = s.pullX * 0.75f,
         ty = sunY,
         tz = -0.45f,
         sx = 0.86f,
         sy = 0.86f,
         sz = 0.86f,
-        rotY = 0f,
+        rotY = s.spinAngleY * 0.5f,
         rotZ = 0f,
         color = skin.sunColor,
         emissive = 0.48f,
@@ -271,16 +269,16 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
         wireframe = wireframe
       )
     } else {
-      val moonY = 1.42f + sin(elapsed * 0.5f) * 0.03f + s.sunOffsetY
+      val moonY = 1.42f + sin(elapsed * 0.5f) * 0.03f + s.pullY * 0.75f
       drawMesh(
         mesh = sphereMesh,
-        tx = s.sunOffsetX,
+        tx = s.pullX * 0.75f,
         ty = moonY,
         tz = -0.45f,
         sx = 0.78f,
         sy = 0.78f,
         sz = 0.78f,
-        rotY = 0f,
+        rotY = s.spinAngleY * 0.5f,
         rotZ = 0f,
         color = Color(0xFFE8ECF4),
         emissive = 0.14f,
@@ -290,7 +288,7 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       )
     }
 
-    // 3. Sculptural Blender-style 3D Cloud Clusters
+    // 3. Sculptural Blender-style 3D Cloud Clusters (spins around Y + rubber-band pull)
     val windFactor = (s.windSpeedMph / 15.0).toFloat().coerceIn(0.25f, 2.2f)
     val cloudDarken = if (s.condition == WeatherCondition.THUNDERSTORM) 0.55f else 1f
     val cColor = Color(
@@ -299,18 +297,24 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
       blue = (skin.cloudColor.blue * cloudDarken).coerceIn(0f, 1f),
       alpha = 1f
     )
+    val cosY = cos(s.spinAngleY.toDouble()).toFloat()
+    val sinY = sin(s.spinAngleY.toDouble()).toFloat()
     for (puff in cloudPuffs) {
       val sway = sin(elapsed * 0.85f * windFactor + puff.driftPhase) * 0.05f
       val bob = cos(elapsed * 1.0f + puff.driftPhase) * 0.025f
+      val px = puff.x + sway
+      val pz = puff.z
+      val rotPx = px * cosY + pz * sinY
+      val rotPz = -px * sinY + pz * cosY
       drawMesh(
         mesh = sphereMesh,
-        tx = puff.x + sway + s.cloudOffsetX,
-        ty = puff.y + bob + s.cloudOffsetY,
-        tz = puff.z,
+        tx = rotPx + s.pullX,
+        ty = puff.y + bob + s.pullY,
+        tz = rotPz,
         sx = puff.rx * cloudPopSpring,
         sy = puff.ry * cloudPopSpring,
         sz = puff.rz * cloudPopSpring,
-        rotY = 0f,
+        rotY = s.spinAngleY,
         rotZ = 0f,
         color = cColor,
         emissive = lightningFlash * 0.35f,
@@ -327,8 +331,8 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
         if (streak.x > 2.4f) streak.x = -2.4f
         drawMesh(
           mesh = streakMesh,
-          tx = streak.x + s.sunOffsetX * 0.5f,
-          ty = streak.y + s.sunOffsetY * 0.5f,
+          tx = streak.x + s.pullX * 0.4f,
+          ty = streak.y + s.pullY * 0.4f,
           tz = streak.z,
           sx = streak.scale,
           sy = 1f,
@@ -348,13 +352,13 @@ class WeatherGLRenderer : GLSurfaceView.Renderer {
     if (s.condition == WeatherCondition.THUNDERSTORM && lightningFlash > 0.15f) {
       drawMesh(
         mesh = boltMesh,
-        tx = s.cloudOffsetX,
-        ty = 0.55f + s.cloudOffsetY,
+        tx = s.pullX,
+        ty = 0.55f + s.pullY,
         tz = 0.35f,
         sx = 0.68f,
         sy = 0.82f,
         sz = 0.68f,
-        rotY = 0f,
+        rotY = s.spinAngleY,
         rotZ = 0f,
         color = Color(0xFFFFF59D),
         emissive = 1.0f,

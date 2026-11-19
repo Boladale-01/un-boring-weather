@@ -3,6 +3,9 @@ package com.unboring.weather.ui.main
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -26,7 +29,13 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Air
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.NightsStay
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.SportsEsports
+import androidx.compose.material.icons.rounded.WaterDrop
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -77,12 +86,34 @@ fun MainScreen(
 
   var tiltX by remember { mutableFloatStateOf(0f) }
   var tiltY by remember { mutableFloatStateOf(0f) }
-  var sunOffsetX by remember { mutableFloatStateOf(0f) }
-  var sunOffsetY by remember { mutableFloatStateOf(0f) }
-  var cloudOffsetX by remember { mutableFloatStateOf(0f) }
-  var cloudOffsetY by remember { mutableFloatStateOf(0f) }
-  var tempOffsetX by remember { mutableFloatStateOf(0f) }
-  var tempOffsetY by remember { mutableFloatStateOf(0f) }
+  var rawPullX by remember { mutableFloatStateOf(0f) }
+  var rawPullY by remember { mutableFloatStateOf(0f) }
+  var spinAngleY by remember { mutableFloatStateOf(0f) }
+  var spinVelY by remember { mutableFloatStateOf(0f) }
+
+  // Rubber-band spring snap-back when released
+  val pullX by animateFloatAsState(
+    targetValue = kotlin.math.tanh(rawPullX.toDouble() * 1.1).toFloat() * 0.28f,
+    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+    label = "pullX"
+  )
+  val pullY by animateFloatAsState(
+    targetValue = kotlin.math.tanh(rawPullY.toDouble() * 1.1).toFloat() * 0.24f,
+    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+    label = "pullY"
+  )
+
+  LaunchedEffect(Unit) {
+    while (true) {
+      kotlinx.coroutines.delay(16L)
+      if (kotlin.math.abs(spinVelY) > 0.0005f) {
+        spinAngleY += spinVelY
+        spinVelY *= 0.94f
+      } else {
+        spinVelY = 0f
+      }
+    }
+  }
 
   var showSkinsSheet by remember { mutableStateOf(false) }
   var showLocationSheet by remember { mutableStateOf(false) }
@@ -128,9 +159,10 @@ fun MainScreen(
                 detectTapGestures(
                   onTap = { viewModel.onSceneTap() },
                   onDoubleTap = {
-                    sunOffsetX = 0f; sunOffsetY = 0f
-                    cloudOffsetX = 0f; cloudOffsetY = 0f
-                    tempOffsetX = 0f; tempOffsetY = 0f
+                    spinAngleY = 0f
+                    spinVelY = 0f
+                    rawPullX = 0f
+                    rawPullY = 0f
                     tiltX = 0f; tiltY = 0f
                     viewModel.onScrubTick()
                   }
@@ -138,25 +170,29 @@ fun MainScreen(
               }
               .pointerInput(Unit) {
                 detectDragGestures(
-                  onDragEnd = { tiltX = 0f; tiltY = 0f },
-                  onDragCancel = { tiltX = 0f; tiltY = 0f }
+                  onDragEnd = {
+                    rawPullX = 0f
+                    rawPullY = 0f
+                    tiltX = 0f
+                    tiltY = 0f
+                    viewModel.onScrubTick()
+                  },
+                  onDragCancel = {
+                    rawPullX = 0f
+                    rawPullY = 0f
+                    tiltX = 0f
+                    tiltY = 0f
+                  }
                 ) { change, dragAmount ->
                   change.consume()
-                  val yFrac = change.position.y / size.height.toFloat()
-                  val dx = dragAmount.x / 180f
-                  val dy = -dragAmount.y / 180f
+                  // Spin freely around Y with rotational inertia
+                  val spinDelta = dragAmount.x / 110f
+                  spinAngleY += spinDelta
+                  spinVelY = spinDelta * 0.65f
 
-                  if (yFrac < 0.36f) {
-                    // Upper stage: drag 3D clouds & sun/moon freely
-                    cloudOffsetX = (cloudOffsetX + dx).coerceIn(-1.6f, 1.6f)
-                    cloudOffsetY = (cloudOffsetY + dy).coerceIn(-1.2f, 1.2f)
-                    sunOffsetX = (sunOffsetX + dx * 0.65f).coerceIn(-1.4f, 1.4f)
-                    sunOffsetY = (sunOffsetY + dy * 0.65f).coerceIn(-1.0f, 1.0f)
-                  } else if (yFrac < 0.70f) {
-                    // Middle stage: drag 3D temperature numerals
-                    tempOffsetX = (tempOffsetX + dx).coerceIn(-1.4f, 1.4f)
-                    tempOffsetY = (tempOffsetY + dy).coerceIn(-1.0f, 1.0f)
-                  }
+                  // Struggle / rubber-band tether when pulled (snaps back on release)
+                  rawPullX += dragAmount.x / 240f
+                  rawPullY += -dragAmount.y / 240f
 
                   tiltX = (tiltX + dragAmount.x / 360f).coerceIn(-1f, 1f)
                   tiltY = (tiltY + dragAmount.y / 360f).coerceIn(-1f, 1f)
@@ -177,12 +213,9 @@ fun MainScreen(
                 cloudSeed = state.cloudSeed,
                 tiltX = tiltX,
                 tiltY = tiltY,
-                sunOffsetX = sunOffsetX,
-                sunOffsetY = sunOffsetY,
-                cloudOffsetX = cloudOffsetX,
-                cloudOffsetY = cloudOffsetY,
-                tempOffsetX = tempOffsetX,
-                tempOffsetY = tempOffsetY
+                pullX = pullX,
+                pullY = pullY,
+                spinAngleY = spinAngleY
               ),
               modifier = Modifier.fillMaxSize()
             )
@@ -236,7 +269,7 @@ fun MainScreen(
               modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 176.dp)
+                .padding(bottom = 224.dp)
             )
 
             // Bottom "Play the Weather" Scrub Bar
@@ -252,7 +285,7 @@ fun MainScreen(
               modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 30.dp)
+                .padding(bottom = 78.dp)
             )
           }
         }
@@ -330,24 +363,56 @@ fun MainScreen(
       }
     }
 
-    // Subtle 6-dot Page Indicator at the very bottom
+    // Tactile Floating Pill Dock
+    val dockItems = listOf(
+      Icons.Rounded.WbSunny to "NOW",
+      Icons.Rounded.WaterDrop to "RAIN",
+      Icons.Rounded.Speed to "DIALS",
+      Icons.Rounded.NightsStay to "MOON",
+      Icons.Rounded.Air to "AQI",
+      Icons.Rounded.SportsEsports to "PLAY"
+    )
     Row(
       modifier = Modifier
         .align(Alignment.BottomCenter)
         .windowInsetsPadding(WindowInsets.navigationBars)
-        .padding(bottom = 10.dp),
-      horizontalArrangement = Arrangement.spacedBy(7.dp),
+        .padding(bottom = 12.dp, start = 16.dp, end = 16.dp)
+        .clip(RoundedCornerShape(28.dp))
+        .background(skin.pillBackground.copy(alpha = 0.94f))
+        .padding(horizontal = 6.dp, vertical = 6.dp),
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      repeat(6) { idx ->
+      dockItems.forEachIndexed { idx, (icon, label) ->
         val active = pagerState.currentPage == idx
-        Box(
+        Row(
           modifier = Modifier
-            .size(if (active) 7.dp else 5.dp)
-            .clip(CircleShape)
-            .background(if (active) skin.onSurface else skin.onSurface.copy(alpha = 0.28f))
-            .clickable { scope.launch { pagerState.animateScrollToPage(idx) } }
-        )
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (active) skin.accent else Color.Transparent)
+            .clickable {
+              viewModel.onScrubTick()
+              scope.launch { pagerState.animateScrollToPage(idx) }
+            }
+            .padding(horizontal = if (active) 12.dp else 10.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+          Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (active) Color.White else skin.onSurface.copy(alpha = 0.65f),
+            modifier = Modifier.size(16.dp)
+          )
+          if (active) {
+            Text(
+              text = label,
+              color = Color.White,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Black,
+              fontFamily = FontFamily.Monospace
+            )
+          }
+        }
       }
     }
   }
@@ -378,10 +443,9 @@ fun MainScreen(
         MenuActionRow("Sound Effects", if (state.soundEnabled) "On" else "Muted") {
           viewModel.toggleSound()
         }
-        MenuActionRow("Reset 3D Positions", "Center sun, clouds & temp") {
-          sunOffsetX = 0f; sunOffsetY = 0f
-          cloudOffsetX = 0f; cloudOffsetY = 0f
-          tempOffsetX = 0f; tempOffsetY = 0f
+        MenuActionRow("Reset 3D Spin", "Center 3D rotation") {
+          spinAngleY = 0f; spinVelY = 0f
+          rawPullX = 0f; rawPullY = 0f
           showMenuSheet = false
         }
         Spacer(modifier = Modifier.height(14.dp))
