@@ -60,8 +60,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unboring.weather.model.SkinCatalog
-import com.unboring.weather.render3d.WeatherGLSurfaceView
-import com.unboring.weather.render3d.WeatherSceneState
 import com.unboring.weather.ui.components.AirQualityPanel
 import com.unboring.weather.ui.components.BlueprintCalloutsOverlay
 import com.unboring.weather.ui.components.CloudburstMinigamePanel
@@ -71,7 +69,9 @@ import com.unboring.weather.ui.components.MoonDetailPanel
 import com.unboring.weather.ui.components.PlayTheWeatherBar
 import com.unboring.weather.ui.components.PrecipDetailPanel
 import com.unboring.weather.ui.components.SkinsAndProSheet
+import com.unboring.weather.ui.components.Weather3DStage
 import com.unboring.weather.ui.components.formatTemp
+import com.unboring.weather.ui.theme.AtkinsonMono
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -199,24 +199,19 @@ fun MainScreen(
                 }
               }
           ) {
-            WeatherGLSurfaceView(
-              sceneState = WeatherSceneState(
-                skinId = state.skinId,
-                condition = activeHour.condition,
-                temperatureDisplay = formatTemp(activeHour.tempF, state.useCelsius),
-                cloudCover = activeHour.cloudCover,
-                windSpeedMph = activeHour.windSpeedMph,
-                windDirectionDeg = activeHour.windDirectionDeg,
-                precipProbability = activeHour.precipProbability,
-                isDay = activeHour.isDay,
-                moonPhaseFraction = state.snapshot.moon.phaseFraction,
-                cloudSeed = state.cloudSeed,
-                tiltX = tiltX,
-                tiltY = tiltY,
-                pullX = pullX,
-                pullY = pullY,
-                spinAngleY = spinAngleY
-              ),
+            Weather3DStage(
+              temperatureDisplay = formatTemp(activeHour.tempF, state.useCelsius),
+              condition = activeHour.condition,
+              precipProbability = activeHour.precipProbability,
+              cloudCover = activeHour.cloudCover,
+              windSpeedMph = activeHour.windSpeedMph,
+              isDay = activeHour.isDay,
+              moonPhaseFraction = state.snapshot.moon.phaseFraction,
+              cloudSeed = state.cloudSeed,
+              skin = skin,
+              spinAngleDeg = Math.toDegrees(spinAngleY.toDouble()).toFloat(),
+              pullX = pullX,
+              pullY = pullY,
               modifier = Modifier.fillMaxSize()
             )
 
@@ -252,25 +247,6 @@ fun MainScreen(
                 )
               }
             }
-
-            // Condition subtitle below the 3D numeral
-            val condSub = if (activeHour.precipProbability >= 25) {
-              "${activeHour.condition.label.uppercase()}  ${activeHour.precipProbability}%"
-            } else {
-              activeHour.condition.label.uppercase()
-            }
-            Text(
-              text = condSub,
-              color = skin.onSurface.copy(alpha = 0.85f),
-              fontSize = 13.sp,
-              fontWeight = FontWeight.Bold,
-              fontFamily = FontFamily.Monospace,
-              letterSpacing = 1.8.sp,
-              modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 224.dp)
-            )
 
             // Bottom "Play the Weather" Scrub Bar
             PlayTheWeatherBar(
@@ -335,7 +311,7 @@ fun MainScreen(
         color = skin.onSurface.copy(alpha = 0.72f),
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = AtkinsonMono,
         letterSpacing = 1.6.sp,
         modifier = Modifier.clickable { showLocationSheet = true }
       )

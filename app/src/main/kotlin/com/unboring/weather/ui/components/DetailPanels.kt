@@ -32,8 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
@@ -45,6 +47,8 @@ import androidx.compose.ui.unit.sp
 import com.unboring.weather.model.HourlyPoint
 import com.unboring.weather.model.WeatherSkin
 import com.unboring.weather.model.WeatherSnapshot
+import com.unboring.weather.ui.theme.AntonioDisplay
+import com.unboring.weather.ui.theme.AtkinsonMono
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -78,55 +82,123 @@ fun PrecipDetailPanel(
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.SpaceBetween
   ) {
-    Text(
-      text = "PRECIP",
-      color = skin.onSurface,
-      fontSize = 36.sp,
-      fontWeight = FontWeight.Black,
-      letterSpacing = (-1).sp
-    )
+    Box(contentAlignment = Alignment.Center) {
+      Text(
+        text = "PRECIP",
+        color = skin.numeralExtrude.copy(alpha = 0.7f),
+        fontSize = 48.sp,
+        fontWeight = FontWeight.Bold,
+        fontFamily = AntonioDisplay,
+        modifier = Modifier.offset(x = 3.dp, y = 4.dp)
+      )
+      Text(
+        text = "PRECIP",
+        color = skin.onSurface,
+        fontSize = 48.sp,
+        fontWeight = FontWeight.Bold,
+        fontFamily = AntonioDisplay
+      )
+    }
 
-    // 3D-style Terrain Cross-Section Slab + Water Pool
+    // Isometric 3D Water Cap + Faceted 3D Rock Slab + 3D Gradient Raindrops (matching Figma Screen 04)
     Canvas(
       modifier = Modifier
         .fillMaxWidth()
-        .height(140.dp)
+        .height(210.dp)
     ) {
-      val w = size.width
-      val h = size.height
-      val slabTop = h * 0.48f
-      val slabH = h * 0.34f
-      val left = w * 0.14f
-      val right = w * 0.86f
+      val cx = size.width * 0.5f
+      val isoW = 120.dp.toPx()
+      val isoH = 38.dp.toPx()
+      val waterTopY = size.height * 0.44f
+      val waterThick = 18.dp.toPx()
+      val rockDepth = 62.dp.toPx()
 
-      // Water layer on top
-      val waterDepth = (6.dp.toPx() + (chanceVal / 100f) * 18.dp.toPx())
-      drawRect(
-        color = skin.rainColor.copy(alpha = 0.85f),
-        topLeft = Offset(left, slabTop - waterDepth),
-        size = Size(right - left, waterDepth)
+      // Soft ground shadow
+      drawOval(
+        color = Color.Black.copy(alpha = 0.16f),
+        topLeft = Offset(cx - isoW * 0.92f, waterTopY + isoH * 2f + rockDepth - 12.dp.toPx()),
+        size = Size(isoW * 1.84f, 28.dp.toPx())
       )
 
-      // Dark 3D terrain block
-      val terrainPath = Path().apply {
-        moveTo(left, slabTop)
-        lineTo(right, slabTop)
-        lineTo(right - 16.dp.toPx(), slabTop + slabH)
-        lineTo(w * 0.52f, slabTop + slabH + 14.dp.toPx())
-        lineTo(left + 14.dp.toPx(), slabTop + slabH)
+      // Faceted 3D Rock Base (Left & Right facets)
+      val rockLeft = Path().apply {
+        moveTo(cx - isoW, waterTopY + isoH + waterThick)
+        lineTo(cx, waterTopY + isoH * 2f + waterThick)
+        lineTo(cx, waterTopY + isoH * 2f + waterThick + rockDepth)
+        lineTo(cx - isoW * 0.52f, waterTopY + isoH * 2f + waterThick + rockDepth * 0.72f)
+        lineTo(cx - isoW * 0.85f, waterTopY + isoH + waterThick + rockDepth * 0.48f)
         close()
       }
-      drawPath(terrainPath, color = skin.numeralExtrude)
+      drawPath(rockLeft, color = Color(0xFF26282E))
 
-      // Falling rain streaks
-      for (i in 0..14) {
-        val rx = left + ((i + 0.5f) / 15f) * (right - left)
-        val ry = (i * 23f) % (slabTop - 20.dp.toPx())
-        drawLine(
-          color = skin.rainColor,
-          start = Offset(rx, ry),
-          end = Offset(rx, ry + 14.dp.toPx()),
-          strokeWidth = 3.dp.toPx()
+      val rockRight = Path().apply {
+        moveTo(cx, waterTopY + isoH * 2f + waterThick)
+        lineTo(cx + isoW, waterTopY + isoH + waterThick)
+        lineTo(cx + isoW * 0.85f, waterTopY + isoH + waterThick + rockDepth * 0.48f)
+        lineTo(cx + isoW * 0.48f, waterTopY + isoH * 2f + waterThick + rockDepth * 0.72f)
+        lineTo(cx, waterTopY + isoH * 2f + waterThick + rockDepth)
+        close()
+      }
+      drawPath(rockRight, color = Color(0xFF141519))
+
+      // 3D Isometric Water Cap (Top, Left, Right)
+      val waterTop = Path().apply {
+        moveTo(cx, waterTopY)
+        lineTo(cx + isoW, waterTopY + isoH)
+        lineTo(cx, waterTopY + isoH * 2f)
+        lineTo(cx - isoW, waterTopY + isoH)
+        close()
+      }
+      drawPath(waterTop, color = Color(0xFF6BD6FF))
+
+      val waterLeft = Path().apply {
+        moveTo(cx - isoW, waterTopY + isoH)
+        lineTo(cx, waterTopY + isoH * 2f)
+        lineTo(cx, waterTopY + isoH * 2f + waterThick)
+        lineTo(cx - isoW, waterTopY + isoH + waterThick)
+        close()
+      }
+      drawPath(waterLeft, color = Color(0xFF2EA8FF))
+
+      val waterRight = Path().apply {
+        moveTo(cx, waterTopY + isoH * 2f)
+        lineTo(cx + isoW, waterTopY + isoH)
+        lineTo(cx + isoW, waterTopY + isoH + waterThick)
+        lineTo(cx, waterTopY + isoH * 2f + waterThick)
+        close()
+      }
+      drawPath(waterRight, color = Color(0xFF177AD9))
+
+      // Water splash ripple
+      drawOval(
+        color = Color.White.copy(alpha = 0.55f),
+        topLeft = Offset(cx - 22.dp.toPx(), waterTopY + isoH - 7.dp.toPx()),
+        size = Size(44.dp.toPx(), 14.dp.toPx()),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+      )
+
+      // 3D Raindrop Capsules with Specular Highlights
+      val drops = listOf(
+        Triple(-76f, 10f, 22f), Triple(-44f, 44f, 26f), Triple(-16f, 4f, 20f),
+        Triple(14f, 52f, 24f), Triple(44f, 18f, 22f), Triple(72f, 46f, 24f),
+        Triple(-56f, 76f, 18f), Triple(56f, 78f, 18f)
+      )
+      drops.forEach { (ox, oy, dh) ->
+        val dx = cx + ox.dp.toPx()
+        val dy = oy.dp.toPx()
+        val dw = 8.dp.toPx()
+        val dhPx = dh.dp.toPx()
+        drawRoundRect(
+          brush = Brush.verticalGradient(listOf(Color(0xFF7AE0FF), Color(0xFF148EFF))),
+          topLeft = Offset(dx, dy),
+          size = Size(dw, dhPx),
+          cornerRadius = CornerRadius(dw / 2f, dw / 2f)
+        )
+        drawRoundRect(
+          color = Color.White.copy(alpha = 0.65f),
+          topLeft = Offset(dx + 2.dp.toPx(), dy + 3.dp.toPx()),
+          size = Size(2.2.dp.toPx(), dhPx * 0.5f),
+          cornerRadius = CornerRadius(1.1.dp.toPx(), 1.1.dp.toPx())
         )
       }
     }
